@@ -21,6 +21,7 @@
 	import { modalStackTop } from '../Modal/modal.store';
 	import Modal from '../Modal/Modal.svelte';
 	import type { SubtitleInfo, VideoSource } from './VideoPlayer';
+	import { safeStreamErrorMessage } from './stream-error';
 	import VideoPlayer from './VideoPlayer.svelte';
 
 	export let modalId: symbol;
@@ -63,6 +64,7 @@
 	let reportProgressInterval: ReturnType<typeof setInterval>;
 
 	let videoStreamP: Promise<StreamDto>;
+	let streamError = '';
 
 	// const movieP = tmdbApi.getTmdbMovie(Number(tmdbId)).then((r) => {
 	// 	title = r?.title || '';
@@ -93,6 +95,7 @@
 
 	const refreshVideoStream = async (audioStreamIndex = 0) => {
 		console.log('refreshVideoStream', season, episode);
+		streamError = '';
 		videoStreamP = (
 			season !== undefined && episode !== undefined
 				? reiverrApiNew.sources.getEpisodeStream(source.id, tmdbId, season, episode, key, {
@@ -109,7 +112,14 @@
 				  })
 		).then((r) => r.data);
 
-		const stream = await videoStreamP;
+		let stream: StreamDto;
+		try {
+			stream = await videoStreamP;
+		} catch (error) {
+			streamError = safeStreamErrorMessage(error);
+			videoSource = undefined;
+			return;
+		}
 
 		const mediaLanguagesStore = createLocalStorageStore<MediaLanguageStore>(
 			'media-tracks-' + title,
@@ -234,14 +244,22 @@
 </script>
 
 <Modal class="bg-black">
-	<VideoPlayer
-		{videoSource}
-		modalHidden={$modalStackTop?.id !== modalId}
-		{title}
-		{subtitle}
-		source={source.name}
-		bind:paused
-		bind:video
-		bind:subtitleInfo
-	/>
+	{#if streamError}
+		<div
+			class="flex h-full min-h-[50vh] items-center justify-center px-8 text-center text-lg text-white"
+		>
+			<p>{streamError}</p>
+		</div>
+	{:else}
+		<VideoPlayer
+			{videoSource}
+			modalHidden={$modalStackTop?.id !== modalId}
+			{title}
+			{subtitle}
+			source={source.name}
+			bind:paused
+			bind:video
+			bind:subtitleInfo
+		/>
+	{/if}
 </Modal>

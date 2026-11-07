@@ -9,6 +9,8 @@
  * ---------------------------------------------------------------
  */
 
+import { encodeStreamKey } from './stream-key';
+
 export interface SonarrSettings {
 	apiKey: string;
 	baseUrl: string;
@@ -1399,7 +1401,7 @@ export class Api<SecurityDataType extends unknown> extends HttpClient<SecurityDa
 			params: RequestParams = {}
 		) =>
 			this.request<StreamDto, any>({
-				path: `/api/sources/${sourceId}/movies/tmdb/${tmdbId}/streams/${key}`,
+				path: `/api/sources/${sourceId}/movies/tmdb/${tmdbId}/streams/${encodeStreamKey(key)}`,
 				method: 'POST',
 				body: data,
 				type: ContentType.Json,
@@ -1424,7 +1426,7 @@ export class Api<SecurityDataType extends unknown> extends HttpClient<SecurityDa
 			params: RequestParams = {}
 		) =>
 			this.request<StreamDto, any>({
-				path: `/api/sources/${sourceId}/shows/tmdb/${tmdbId}/season/${season}/episode/${episode}/streams/${key}`,
+				path: `/api/sources/${sourceId}/shows/tmdb/${tmdbId}/season/${season}/episode/${episode}/streams/${encodeStreamKey(key)}`,
 				method: 'POST',
 				body: data,
 				type: ContentType.Json,

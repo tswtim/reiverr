@@ -49,11 +49,23 @@ import { SourceProvidersService } from 'src/source-providers/source-providers.se
 import { User } from 'src/users/user.entity';
 import { MediaSource } from './media-source.entity';
 import { MediaSourcesService } from './media-sources.service';
+import { readStreamKey } from './stream-key';
 
 type MediaSourceConnection = {
   provider: SourceProvider;
   mediaSource: MediaSource;
 };
+
+function rethrowStreamError(error: unknown): never {
+  if (error === SourceProviderError.StreamNotFound) {
+    throw new NotFoundException('Stream not found');
+  }
+  if (error instanceof Error && error.name === 'TorrentInputError') {
+    throw new BadRequestException(error.message);
+  }
+  console.error(error);
+  throw new InternalServerErrorException();
+}
 
 @Injectable()
 export class ServiceOwnershipValidator implements CanActivate {
@@ -197,7 +209,9 @@ export class MediaSourcesController {
     return streams ?? { candidates: [] };
   }
 
-  @Post(':sourceId/movies/tmdb/:tmdbId/streams/:key')
+  // Wildcard so a literal "/" in a release title still matches. The client
+  // also encodeURIComponent()s the key once; Express decodes that once.
+  @Post(':sourceId/movies/tmdb/:tmdbId/streams/*')
   @ApiOkResponse({
     description: 'Movie stream',
     type: StreamDto,
@@ -205,11 +219,12 @@ export class MediaSourcesController {
   async getMovieStream(
     @Param('tmdbId') tmdbId: string,
     @Param('sourceId') sourceId: string,
-    @Param('key') key: string,
+    @Param() params: Record<string, string>,
     @GetAuthUser() user: User,
     @GetAuthToken() token: string,
     @Body() config: PlaybackConfigDto,
   ): Promise<StreamDto> {
+    const key = readStreamKey(params);
     const connection = await this.getConnection(sourceId);
     const metadata = await this.getMovieMetadata(tmdbId);
 
@@ -217,7 +232,7 @@ export class MediaSourcesController {
       .getMovieStream?.(
         tmdbId,
         metadata,
-        key || '',
+        key,
         {
           userId: user.id,
           settings: connection.mediaSource.pluginSettings,
@@ -226,14 +241,7 @@ export class MediaSourcesController {
         },
         config,
       )
-      .catch((e) => {
-        if (e === SourceProviderError.StreamNotFound) {
-          throw new NotFoundException('Stream not found');
-        } else {
-          console.error(e);
-          throw new InternalServerErrorException();
-        }
-      });
+      .catch((e) => rethrowStreamError(e));
 
     if (!stream) {
       throw new NotFoundException('Stream not found');
@@ -243,7 +251,7 @@ export class MediaSourcesController {
   }
 
   @Post(
-    ':sourceId/shows/tmdb/:tmdbId/season/:season/episode/:episode/streams/:key',
+    ':sourceId/shows/tmdb/:tmdbId/season/:season/episode/:episode/streams/*',
   )
   @ApiOkResponse({
     description: 'Show stream',
@@ -254,11 +262,12 @@ export class MediaSourcesController {
     @Param('tmdbId') tmdbId: string,
     @Param('season', ParseIntPipe) season: number,
     @Param('episode', ParseIntPipe) episode: number,
-    @Param('key') key: string,
+    @Param() params: Record<string, string>,
     @GetAuthUser() user: User,
     @GetAuthToken() token: string,
     @Body() config: PlaybackConfigDto,
   ): Promise<StreamDto> {
+    const key = readStreamKey(params);
     const connection = await this.getConnection(sourceId);
     const metadata = await this.getSeriesMetadata(tmdbId, season, episode);
 
@@ -266,7 +275,7 @@ export class MediaSourcesController {
       .getEpisodeStream?.(
         tmdbId,
         metadata,
-        key || '',
+        key,
         {
           userId: user.id,
           settings: connection.mediaSource.pluginSettings,
@@ -275,14 +284,7 @@ export class MediaSourcesController {
         },
         config,
       )
-      .catch((e) => {
-        if (e === SourceProviderError.StreamNotFound) {
-          throw new NotFoundException('Stream not found');
-        } else {
-          console.error(e);
-          throw new InternalServerErrorException();
-        }
-      });
+      .catch((e) => rethrowStreamError(e));
 
     if (!stream) {
       throw new NotFoundException('Stream not found');
@@ -360,10 +362,10 @@ export class MediaSourcesController {
       tmdbId,
       season,
       episode,
-      seasonEpisodes: metadata.tmdbSeries.seasons.find(
+      seasonEpisodes: metadata.tmdbSeries.seasons?.find(
         (s) => s.season_number === season,
       )?.episode_count,
-      episodeRuntime: metadata.tmdbSeries.last_episode_to_air.runtime,
+      episodeRuntime: metadata.tmdbSeries.last_episode_to_air?.runtime,
     };
   }
 
