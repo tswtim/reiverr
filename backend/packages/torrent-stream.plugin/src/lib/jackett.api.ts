@@ -35,13 +35,6 @@ type JackettResponse = {
 
 const jackettXmlParser = new XMLParser({ ignoreAttributes: false });
 
-function getTorrentWithInfohash(
-  items: JackettItem[],
-  infohash: string,
-): JackettItem | undefined {
-  return items.find((i) => getTorrentAttribute(i, 'infohash') === infohash);
-}
-
 export const getTorrentAttribute = (
   item: JackettItem,
   attribute: string,
@@ -51,6 +44,19 @@ export const getTorrentAttribute = (
     ''
   );
 };
+
+/** Same identity advertised on a stream candidate and later passed back as `key`. */
+export function streamKeyFromItem(item: JackettItem): string {
+  return getTorrentAttribute(item, 'infohash') || item.title || item.guid || '';
+}
+
+export function findTorrentByStreamKey(
+  items: JackettItem[] | undefined,
+  key: string,
+): JackettItem | undefined {
+  if (!Array.isArray(items) || !key) return undefined;
+  return items.find((item) => streamKeyFromItem(item) === key);
+}
 
 export const getMovieTorrents = (
   settings: TorrentSettings,
@@ -74,8 +80,8 @@ export const getMovieTorrents = (
   return {
     items: torrents,
     seasonPacks: Promise.resolve([]),
-    get: (infohash) =>
-      torrents.then((torrents) => getTorrentWithInfohash(torrents, infohash)),
+    get: (key) =>
+      torrents.then((torrents) => findTorrentByStreamKey(torrents, key)),
   };
 };
 
@@ -122,8 +128,8 @@ export const getEpisodeTorrents = (
   return {
     items: torrents,
     seasonPacks: seasonPacks,
-    get: (infohash) =>
-      combined.then((torrents) => getTorrentWithInfohash(torrents, infohash)),
+    get: (key) =>
+      combined.then((torrents) => findTorrentByStreamKey(torrents, key)),
   };
 };
 
@@ -148,10 +154,7 @@ export function getStreamCandidates(
         : 0;
 
     return {
-      key:
-        getTorrentAttribute(torrent, 'infohash') ||
-        torrent.title ||
-        torrent.guid,
+      key: streamKeyFromItem(torrent),
       title: torrent.title || torrent.description,
       properties: [
         {

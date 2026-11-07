@@ -49,6 +49,7 @@ import { SourceProvidersService } from 'src/source-providers/source-providers.se
 import { User } from 'src/users/user.entity';
 import { MediaSource } from './media-source.entity';
 import { MediaSourcesService } from './media-sources.service';
+import { readStreamKey } from './stream-key';
 
 type MediaSourceConnection = {
   provider: SourceProvider;
@@ -197,7 +198,9 @@ export class MediaSourcesController {
     return streams ?? { candidates: [] };
   }
 
-  @Post(':sourceId/movies/tmdb/:tmdbId/streams/:key')
+  // Wildcard so a literal "/" in a release title still matches. The client
+  // also encodeURIComponent()s the key once; Express decodes that once.
+  @Post(':sourceId/movies/tmdb/:tmdbId/streams/*')
   @ApiOkResponse({
     description: 'Movie stream',
     type: StreamDto,
@@ -205,11 +208,12 @@ export class MediaSourcesController {
   async getMovieStream(
     @Param('tmdbId') tmdbId: string,
     @Param('sourceId') sourceId: string,
-    @Param('key') key: string,
+    @Param() params: Record<string, string>,
     @GetAuthUser() user: User,
     @GetAuthToken() token: string,
     @Body() config: PlaybackConfigDto,
   ): Promise<StreamDto> {
+    const key = readStreamKey(params);
     const connection = await this.getConnection(sourceId);
     const metadata = await this.getMovieMetadata(tmdbId);
 
@@ -217,7 +221,7 @@ export class MediaSourcesController {
       .getMovieStream?.(
         tmdbId,
         metadata,
-        key || '',
+        key,
         {
           userId: user.id,
           settings: connection.mediaSource.pluginSettings,
@@ -243,7 +247,7 @@ export class MediaSourcesController {
   }
 
   @Post(
-    ':sourceId/shows/tmdb/:tmdbId/season/:season/episode/:episode/streams/:key',
+    ':sourceId/shows/tmdb/:tmdbId/season/:season/episode/:episode/streams/*',
   )
   @ApiOkResponse({
     description: 'Show stream',
@@ -254,11 +258,12 @@ export class MediaSourcesController {
     @Param('tmdbId') tmdbId: string,
     @Param('season', ParseIntPipe) season: number,
     @Param('episode', ParseIntPipe) episode: number,
-    @Param('key') key: string,
+    @Param() params: Record<string, string>,
     @GetAuthUser() user: User,
     @GetAuthToken() token: string,
     @Body() config: PlaybackConfigDto,
   ): Promise<StreamDto> {
+    const key = readStreamKey(params);
     const connection = await this.getConnection(sourceId);
     const metadata = await this.getSeriesMetadata(tmdbId, season, episode);
 
@@ -266,7 +271,7 @@ export class MediaSourcesController {
       .getEpisodeStream?.(
         tmdbId,
         metadata,
-        key || '',
+        key,
         {
           userId: user.id,
           settings: connection.mediaSource.pluginSettings,
