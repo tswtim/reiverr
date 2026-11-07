@@ -21,7 +21,11 @@ export function persistedTorrentKind(value: unknown): string {
 }
 
 export function safeTorrentErrorCode(error: unknown): string {
-  if (error instanceof TorrentInputError) return 'torrent-input';
+  if (error instanceof TorrentInputError) {
+    return /^[a-z0-9-]{1,40}$/.test(error.reason)
+      ? error.reason
+      : 'torrent-input';
+  }
   if (
     error instanceof Error &&
     error.message === 'Invalid torrent identifier'
@@ -41,6 +45,7 @@ function asEngineError(error: unknown): Error {
   ) {
     return new TorrentInputError(
       'The release link is not a magnet, info hash, or torrent file.',
+      'invalid-identifier',
     );
   }
   if (error instanceof Error) return error;

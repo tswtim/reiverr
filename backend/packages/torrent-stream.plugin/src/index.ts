@@ -18,6 +18,7 @@ import {
 import { getFiles } from './lib/torrent-manager';
 import {
   filesForRelease,
+  locatorKind,
   resolveTorrentEngineId,
   TorrentInputError,
 } from './lib/torrent-id';
@@ -275,6 +276,13 @@ class TorrentProvider extends SourceProvider {
       });
     } catch (error) {
       if (error instanceof TorrentInputError) {
+        console.error(
+          'torrent-reject',
+          JSON.stringify({
+            reason: error.reason,
+            locator: locatorKind(magnetLink),
+          }),
+        );
         res.status(400).send(error.message);
         return;
       }
