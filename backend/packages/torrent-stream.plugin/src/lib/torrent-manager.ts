@@ -165,7 +165,22 @@ class EngineCache {
   }
 
   private async destroyEngine(infoHash: string) {
-    const engine = await this.engineCache[infoHash];
+    const pending = this.engineCache[infoHash];
+    if (!pending) return;
+    let engine: TorrentStream.TorrentEngine | undefined;
+    try {
+      engine = await pending;
+    } catch {
+      // A saved http link never became an engine. Drop only the in-memory
+      // rejection; the cache file is updated later only if a new id opens.
+      delete this.engineCache[infoHash];
+      console.error(
+        'skipped persisted torrent',
+        persistedTorrentKind(infoHash),
+        'invalid-identifier',
+      );
+      return;
+    }
 
     await new Promise((res) => {
       engine?.remove

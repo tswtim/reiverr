@@ -2,6 +2,8 @@ import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as bencode from 'bncode';
+import { XMLParser } from 'fast-xml-parser';
 import * as parseTorrent from 'parse-torrent';
 
 const HASH = 'ab'.repeat(20);
@@ -144,5 +146,84 @@ describe('persisted torrent startup', () => {
     expect(report.goodCount).toBe(1);
     expect(fs.readFileSync(started.cacheFile, 'utf8')).toBe('{');
     fs.rmSync(started.dir, { recursive: true, force: true });
+  });
+
+  it('opens a Jackett http release after a saved http id was rejected by parse-torrent', () => {
+    const link =
+      'http://host.docker.internal:9117/dl/noname-club/?jackett_apikey=SECRET-FIXTURE&path=abc&file=Fixture.torrent';
+    const xml = `<?xml version="1.0"?><rss xmlns:torznab="http://torznab.com/schemas/2015/feed"><channel><item>
+<title>Fixture Name</title>
+<link>${link.replace(/&/g, '&amp;')}</link>
+<enclosure url="${link.replace(/&/g, '&amp;')}" length="4" type="application/x-bittorrent"/>
+<torznab:attr name="category" value="2000"/>
+<torznab:attr name="category" value="2040"/>
+<torznab:attr name="seeders" value="2"/>
+<torznab:attr name="peers" value="1"/>
+<torznab:attr name="downloadvolumefactor" value="0"/>
+<torznab:attr name="uploadvolumefactor" value="1"/>
+</item></channel></rss>`;
+    const item = new XMLParser({ ignoreAttributes: false }).parse(xml).rss
+      .channel.item;
+    const torrentBytes = bencode.encode({
+      announce: 'http://tracker.fixture/announce',
+      info: {
+        name: 'fixture',
+        'piece length': 16384,
+        pieces: Buffer.alloc(20, 1),
+        length: 4,
+      },
+    });
+    expect(parseTorrent(torrentBytes).infoHash).toMatch(/^[a-f0-9]{40}$/);
+    expect(() => parseTorrent(link)).toThrow('Invalid torrent identifier');
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reiverr-torrent-play-'));
+    const cacheFile = path.join(dir, 'stream-cache.json');
+    const itemFile = path.join(dir, 'item.json');
+    const bytesFile = path.join(dir, 'fixture.torrent');
+    const reportFile = path.join(dir, 'report.json');
+    fs.writeFileSync(
+      cacheFile,
+      JSON.stringify({
+        u1: { userId: 'u1', infoHash: link, lastAccessed: Date.now() },
+      }),
+    );
+    fs.writeFileSync(itemFile, JSON.stringify(item));
+    fs.writeFileSync(bytesFile, torrentBytes);
+    const started = spawnSync(
+      process.execPath,
+      [path.join(__dirname, 'torrent-playback-runner.js')],
+      {
+        cwd: path.join(__dirname, '../..'),
+        encoding: 'utf8',
+        timeout: 8000,
+        env: {
+          ...process.env,
+          TORRENT_STREAM_CACHE_FILE: cacheFile,
+          TORRENT_STARTUP_RESULT: reportFile,
+          TORRENT_MANAGER_PATH: managerPath,
+          TORRENT_ID_PATH: path.join(
+            __dirname,
+            '../../packages/torrent-stream.plugin/src/lib/torrent-id.ts',
+          ),
+          ITEM_PATH: itemFile,
+          TORRENT_BYTES_PATH: bytesFile,
+          USER_ID: 'u1',
+          JACKETT_BASE:
+            'http://host.docker.internal:9117/api/v2.0/indexers/all/results/torznab/',
+          SECRET_MARKER: 'SECRET-FIXTURE',
+        },
+      },
+    );
+    expect(started.status).toBe(0);
+    expect(`${started.stderr}\n${started.stdout}`).not.toMatch(SECRET);
+    const report = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
+    expect(report.startupSame).toBe(true);
+    expect(report.secretAfterStartup).toBe(true);
+    expect(report.played).toBe(true);
+    expect(report.reason).toBe('');
+    expect(report.seen).toContain('invalid-identifier');
+    expect(report.seen).toContain('accepted');
+    expect(report.secretAfterPlay).toBe(false);
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });
