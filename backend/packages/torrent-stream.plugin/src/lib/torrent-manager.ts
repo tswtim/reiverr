@@ -37,6 +37,125 @@ export function safeTorrentErrorCode(error: unknown): string {
   return 'engine-error';
 }
 
+const ENGINE_DIAG_INTERVAL_MS = 10_000;
+const ENGINE_DIAG_MAX_MS = 120_000;
+
+function diagNumber(value: unknown): string {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? String(Math.max(0, Math.floor(value)))
+    : 'unavailable';
+}
+
+function diagLength(value: unknown): string {
+  return Array.isArray(value) ? String(value.length) : 'unavailable';
+}
+
+/**
+ * Observe an already created torrent-stream 1.2.1 engine.
+ * discovery/DHT/tracker objects are not exposed, and calling
+ * swarm.downloadSpeed() changes its window, so those stay unavailable.
+ */
+export function watchTorrentEngine(
+  engine: {
+    on: (event: string, listener: (...args: unknown[]) => void) => unknown;
+    removeListener?: (
+      event: string,
+      listener: (...args: unknown[]) => void,
+    ) => unknown;
+    destroy?: (cb?: () => void) => void;
+    swarm?: {
+      wires?: unknown;
+      connections?: unknown;
+      downloaded?: unknown;
+      queued?: unknown;
+      _destroyed?: boolean;
+    };
+  },
+  options: { intervalMs?: number; maxMs?: number; now?: () => number } = {},
+): { stop: () => void } {
+  const intervalMs = options.intervalMs ?? ENGINE_DIAG_INTERVAL_MS;
+  const maxMs = options.maxMs ?? ENGINE_DIAG_MAX_MS;
+  const now = options.now ?? Date.now;
+  const started = now();
+  let peerEvents = 0;
+  let blockedPeerEvents = 0;
+  let wireEvents = 0;
+  let ready = false;
+  let stopped = false;
+  const onPeer = () => {
+    peerEvents += 1;
+  };
+  const onBlocked = () => {
+    blockedPeerEvents += 1;
+  };
+  const onWire = () => {
+    wireEvents += 1;
+  };
+  const onReady = () => {
+    ready = true;
+  };
+  const sample = (reason: string) => {
+    const swarm = engine.swarm;
+    const active =
+      swarm == null ? 'unavailable' : swarm._destroyed === true ? 'no' : 'yes';
+    console.info(
+      'torrent-engine',
+      `t=${diagNumber(now() - started)}ms`,
+      `reason=${reason}`,
+      `active=${active}`,
+      `ready=${ready ? 'yes' : 'no'}`,
+      `peerEvents=${peerEvents}`,
+      `blockedPeerEvents=${blockedPeerEvents}`,
+      `wireEvents=${wireEvents}`,
+      `wires=${diagLength(swarm?.wires)}`,
+      `connections=${diagLength(swarm?.connections)}`,
+      `queued=${diagNumber(swarm?.queued)}`,
+      `downloaded=${diagNumber(swarm?.downloaded)}`,
+      'speed=unavailable',
+      'dht=unavailable',
+      'tracker=unavailable',
+    );
+  };
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(timer);
+    engine.removeListener?.('peer', onPeer);
+    engine.removeListener?.('blocked-peer', onBlocked);
+    engine.removeListener?.('wire', onWire);
+    engine.removeListener?.('ready', onReady);
+    engine.removeListener?.('error', onError);
+  };
+  const onError = (error: unknown) => {
+    sample(`error code=${safeTorrentErrorCode(error)}`);
+    stop();
+  };
+  engine.on('peer', onPeer);
+  engine.on('blocked-peer', onBlocked);
+  engine.on('wire', onWire);
+  engine.on('ready', onReady);
+  engine.on('error', onError);
+  const timer = setInterval(() => {
+    if (now() - started >= maxMs) {
+      sample('limit');
+      stop();
+      return;
+    }
+    sample('interval');
+  }, intervalMs);
+  if (typeof timer.unref === 'function') timer.unref();
+  const originalDestroy = engine.destroy;
+  if (originalDestroy) {
+    engine.destroy = (cb?: () => void) => {
+      stop();
+      const result = originalDestroy.call(engine, cb);
+      sample('destroy');
+      return result;
+    };
+  }
+  return { stop };
+}
+
 function asEngineError(error: unknown): Error {
   if (error instanceof TorrentInputError) return error;
   if (
@@ -240,6 +359,7 @@ class EngineCache {
                   'torrent-stream-downloads',
               ),
         });
+        watchTorrentEngine(engine);
         engine.on('ready', () => succeed(engine));
         engine.on('error', (error: unknown) => fail(error));
         engine.on('download', () => console.info('onDownload', kind));
