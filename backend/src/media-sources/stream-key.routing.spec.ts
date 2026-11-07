@@ -103,6 +103,13 @@ describe('stream key routes', () => {
         _metadata: unknown,
         key: string,
       ) => {
+        if (key === 'bad-torrent') {
+          const error = new Error(
+            'The release link is not a magnet, info hash, or torrent file.',
+          );
+          error.name = 'TorrentInputError';
+          throw error;
+        }
         seen.movie.push(key);
         return { key, src: 'fixture://movie' };
       },
@@ -111,6 +118,13 @@ describe('stream key routes', () => {
         _metadata: unknown,
         key: string,
       ) => {
+        if (key === 'bad-torrent') {
+          const error = new Error(
+            'The release link is not a magnet, info hash, or torrent file.',
+          );
+          error.name = 'TorrentInputError';
+          throw error;
+        }
         seen.episode.push(key);
         return { key, src: 'fixture://episode' };
       },
@@ -143,11 +157,12 @@ describe('stream key routes', () => {
             getMovieByTmdbId: async () => ({
               tmdbMovie: { title: 'Fixture', release_date: '2008-01-01' },
             }),
-            getSeriesByTmdbId: async () => ({
+            getSeriesByTmdbId: async (id: string) => ({
               tmdbSeries: {
                 name: 'Fixture Series',
                 seasons: [{ season_number: 1, episode_count: 12 }],
-                last_episode_to_air: { runtime: 40 },
+                last_episode_to_air:
+                  id === 'null-runtime' ? null : { runtime: 40 },
               },
             }),
           },
@@ -216,5 +231,35 @@ describe('stream key routes', () => {
     expect(episodes.status).toBe(200);
     expect(movies.body.candidates[0].key).toBe('ABCDEF0123456789');
     expect(episodes.body.candidates[0].key).toBe('ABCDEF0123456789');
+  });
+
+  it('turns an unusable torrent link into a safe 400 for movies and episodes', async () => {
+    const movie = await request(app.getHttpServer())
+      .post(
+        `/api/sources/source-uuid/movies/tmdb/550/streams/${encodeURIComponent('bad-torrent')}`,
+      )
+      .send({});
+    const episode = await request(app.getHttpServer())
+      .post(
+        `/api/sources/source-uuid/shows/tmdb/5920/season/1/episode/1/streams/${encodeURIComponent('bad-torrent')}`,
+      )
+      .send({});
+
+    for (const response of [movie, episode]) {
+      expect(response.status).toBe(400);
+      expect(response.body.message).toBe(
+        'The release link is not a magnet, info hash, or torrent file.',
+      );
+      expect(JSON.stringify(response.body)).not.toContain('apikey');
+    }
+  });
+
+  it('lists episode streams when the series has no last aired episode', async () => {
+    const response = await request(app.getHttpServer()).get(
+      '/api/sources/source-uuid/shows/tmdb/null-runtime/season/1/episode/1/streams',
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.candidates[0].key).toBe('ABCDEF0123456789');
   });
 });

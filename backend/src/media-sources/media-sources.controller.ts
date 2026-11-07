@@ -56,6 +56,17 @@ type MediaSourceConnection = {
   mediaSource: MediaSource;
 };
 
+function rethrowStreamError(error: unknown): never {
+  if (error === SourceProviderError.StreamNotFound) {
+    throw new NotFoundException('Stream not found');
+  }
+  if (error instanceof Error && error.name === 'TorrentInputError') {
+    throw new BadRequestException(error.message);
+  }
+  console.error(error);
+  throw new InternalServerErrorException();
+}
+
 @Injectable()
 export class ServiceOwnershipValidator implements CanActivate {
   constructor(private mediaSourcesService: MediaSourcesService) {}
@@ -230,14 +241,7 @@ export class MediaSourcesController {
         },
         config,
       )
-      .catch((e) => {
-        if (e === SourceProviderError.StreamNotFound) {
-          throw new NotFoundException('Stream not found');
-        } else {
-          console.error(e);
-          throw new InternalServerErrorException();
-        }
-      });
+      .catch((e) => rethrowStreamError(e));
 
     if (!stream) {
       throw new NotFoundException('Stream not found');
@@ -280,14 +284,7 @@ export class MediaSourcesController {
         },
         config,
       )
-      .catch((e) => {
-        if (e === SourceProviderError.StreamNotFound) {
-          throw new NotFoundException('Stream not found');
-        } else {
-          console.error(e);
-          throw new InternalServerErrorException();
-        }
-      });
+      .catch((e) => rethrowStreamError(e));
 
     if (!stream) {
       throw new NotFoundException('Stream not found');
@@ -365,10 +362,10 @@ export class MediaSourcesController {
       tmdbId,
       season,
       episode,
-      seasonEpisodes: metadata.tmdbSeries.seasons.find(
+      seasonEpisodes: metadata.tmdbSeries.seasons?.find(
         (s) => s.season_number === season,
       )?.episode_count,
-      episodeRuntime: metadata.tmdbSeries.last_episode_to_air.runtime,
+      episodeRuntime: metadata.tmdbSeries.last_episode_to_air?.runtime,
     };
   }
 

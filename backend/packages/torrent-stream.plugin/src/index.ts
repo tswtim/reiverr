@@ -16,6 +16,11 @@ import {
   getStreamCandidates,
 } from './lib/jackett.api';
 import { getFiles } from './lib/torrent-manager';
+import {
+  filesForRelease,
+  resolveTorrentEngineId,
+  TorrentInputError,
+} from './lib/torrent-id';
 import { TorrentSettingsManager } from './settings';
 import type { TorrentSettings } from './types';
 import {
@@ -136,13 +141,16 @@ class TorrentProvider extends SourceProvider {
       throw new Error('Torrent not found');
     }
 
+    const { engineId, files } = await filesForRelease(
+      torrent,
+      { jackettBaseUrl: settings.baseUrl },
+      (id) => getFiles(context.userId, id),
+    );
     const src = `${this.getProxyUrl(
       context.sourceId,
-    )}/magnet?link=${encodeURIComponent(torrent?.link)}&reiverr_token=${
+    )}/magnet?link=${encodeURIComponent(engineId)}&reiverr_token=${
       context.token
     }`;
-
-    const files = await getFiles(context.userId, torrent.link);
 
     files.forEach((f) => console.log(`file: ${f.name}`));
 
@@ -152,7 +160,7 @@ class TorrentProvider extends SourceProvider {
         kind: 'subtitles',
         src: `${this.getProxyUrl(
           context.sourceId,
-        )}/magnet?link=${encodeURIComponent(torrent.link)}&reiverr_token=${
+        )}/magnet?link=${encodeURIComponent(engineId)}&reiverr_token=${
           context.token
         }&file=${f.name}`,
         label: f.name,
@@ -201,13 +209,16 @@ class TorrentProvider extends SourceProvider {
       throw new Error('Torrent not found');
     }
 
+    const { engineId, files } = await filesForRelease(
+      torrent,
+      { jackettBaseUrl: settings.baseUrl },
+      (id) => getFiles(context.userId, id),
+    );
     const src = `${this.getProxyUrl(
       context.sourceId,
-    )}/magnet?link=${encodeURIComponent(torrent.link)}&reiverr_token=${
+    )}/magnet?link=${encodeURIComponent(engineId)}&reiverr_token=${
       context.token
     }&season=${metadata.season}&episode=${metadata.episode}`;
-
-    const files = await getFiles(context.userId, torrent.link);
 
     const subtitles: Subtitles[] = files
       .filter((f) => subtitleExtensions.some((ext) => f.name.endsWith(ext)))
@@ -215,7 +226,7 @@ class TorrentProvider extends SourceProvider {
         kind: 'subtitles',
         src: `${this.getProxyUrl(
           context.sourceId,
-        )}/magnet?link=${encodeURIComponent(torrent.link)}&reiverr_token=${
+        )}/magnet?link=${encodeURIComponent(engineId)}&reiverr_token=${
           context.token
         }&file=${f.name}`,
         label: f.name,
@@ -252,14 +263,24 @@ class TorrentProvider extends SourceProvider {
     const season = params.get('season');
     const episode = params.get('episode');
 
-    console.log('magnetLink', magnetLink);
-
     if (!magnetLink) {
       res.status(400).send('No magnet link provided');
       return;
     }
 
-    const files = await getFiles(context.userId, magnetLink);
+    let engineId: string;
+    try {
+      engineId = await resolveTorrentEngineId(magnetLink, {
+        jackettBaseUrl: settings.baseUrl,
+      });
+    } catch (error) {
+      if (error instanceof TorrentInputError) {
+        res.status(400).send(error.message);
+        return;
+      }
+      throw error;
+    }
+    const files = await getFiles(context.userId, engineId);
 
     let file: TorrentStream.TorrentFile | undefined;
 
